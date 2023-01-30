@@ -49,8 +49,8 @@ internal fun App() {
         }
 
         LaunchedEffect(canvasSize) {
-            val x = Random.nextInt(0, canvasSize.width.roundToInt())
-            val y = Random.nextInt(0, canvasSize.height.roundToInt())
+            val x = Random.nextInt(0, canvasSize.width.roundToInt().coerceAtLeast(1))
+            val y = Random.nextInt(0, canvasSize.height.roundToInt().coerceAtLeast(1))
             itemOffset = Offset(x.toFloat(), y.toFloat())
         }
 
