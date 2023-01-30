@@ -41,6 +41,7 @@ internal fun App() {
             }
         }
         var points by remember { mutableStateOf(0.0) }
+        var startAutomatically by remember { mutableStateOf(false) }
         var showFound by remember(itemOffset) { mutableStateOf(false) }
         var timer by timer(!showFound, foundText)
 
@@ -59,6 +60,16 @@ internal fun App() {
                 delay(1000)
                 println("FOUND IT!")
                 showFound = true
+                if (startAutomatically) {
+                    delay(1000)
+                    val pointsGained = itemOffset.getDistance() - timer
+                    points += pointsGained.absoluteValue
+                    val x = Random.nextInt(0, canvasSize.width.roundToInt())
+                    val y = Random.nextInt(0, canvasSize.height.roundToInt())
+                    itemOffset = Offset(x.toFloat(), y.toFloat())
+                    showFound = false
+                    timer = 0.0
+                }
             }
         }
 
@@ -66,6 +77,15 @@ internal fun App() {
             Scaffold(
                 topBar = {
                     TopAppBar(
+                        navigationIcon = {
+                            Column(modifier = Modifier.padding(end = 4.dp)) {
+                                Text("Start Next Round Automatically?")
+                                Switch(
+                                    startAutomatically,
+                                    onCheckedChange = { startAutomatically = it }
+                                )
+                            }
+                        },
                         title = { Text("Masking") },
                         actions = {
                             Text("${animateIntAsState(points.roundToInt()).value} points")
