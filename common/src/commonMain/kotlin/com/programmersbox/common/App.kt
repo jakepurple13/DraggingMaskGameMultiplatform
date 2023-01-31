@@ -57,7 +57,14 @@ internal fun App() {
             ModalNavigationDrawer(
                 drawerContent = {
                     ModalDrawerSheet {
-                        TopAppBar(title = { Text("Settings") })
+                        TopAppBar(
+                            title = { Text("Settings") },
+                            actions = {
+                                IconButton(
+                                    onClick = { scope.launch { drawerState.close() } }
+                                ) { Icon(Icons.Default.Close, null) }
+                            }
+                        )
                         Divider()
                         Column(
                             verticalArrangement = Arrangement.spacedBy(4.dp),
