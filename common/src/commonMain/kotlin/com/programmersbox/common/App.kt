@@ -61,7 +61,7 @@ internal fun App() {
                 println("FOUND IT!")
                 showFound = true
                 if (startAutomatically) {
-                    delay(1000)
+                    delay(500)
                     val pointsGained = itemOffset.getDistance() - timer
                     points += pointsGained.absoluteValue
                     val x = Random.nextInt(0, canvasSize.width.roundToInt())
