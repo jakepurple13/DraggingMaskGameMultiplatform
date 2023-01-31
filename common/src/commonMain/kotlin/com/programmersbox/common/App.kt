@@ -5,7 +5,10 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -16,7 +19,11 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.*
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalTime
 import kotlin.math.absoluteValue
@@ -27,132 +34,137 @@ import kotlin.random.Random
 @Composable
 internal fun App() {
     M3MaterialThemeSetup(isSystemInDarkTheme()) {
-        var offset by remember { mutableStateOf(Offset.Zero) }
-        val offsetAnimation = remember(offset) { Animatable(offset, Offset.VectorConverter) }
-        val size by remember { mutableStateOf(250f) }
         val scope = rememberCoroutineScope()
-        var center by remember { mutableStateOf(IntOffset.Zero) }
-        var canvasSize by remember { mutableStateOf(Size.Zero) }
-        var itemOffset by remember { mutableStateOf(Offset.Zero) }
-        val foundText by remember {
-            derivedStateOf {
-                itemOffset.x in offset.x..(offset.x + size) &&
-                        itemOffset.y in offset.y..(offset.y + size)
-            }
-        }
-        var points by remember { mutableStateOf(0.0) }
-        var startAutomatically by remember { mutableStateOf(false) }
-        var showFound by remember(itemOffset) { mutableStateOf(false) }
-        var timer by timer(!showFound, foundText)
+        val game = remember { GameViewModel(scope) }
+        val offsetAnimation = remember(game.offset) { Animatable(game.offset, Offset.VectorConverter) }
+        var showFound by remember(game.itemOffset) { mutableStateOf(false) }
+        val drawerState = rememberDrawerState(DrawerValue.Closed)
 
-        val readableTimer by remember {
-            derivedStateOf { LocalTime.fromMillisecondOfDay(timer.roundToInt()).toString() }
+        LaunchedEffect(game.canvasSize) {
+            game.reset()
+            game.newLocation()
         }
 
-        LaunchedEffect(canvasSize) {
-            val x = Random.nextInt(0, canvasSize.width.roundToInt().coerceAtLeast(1))
-            val y = Random.nextInt(0, canvasSize.height.roundToInt().coerceAtLeast(1))
-            itemOffset = Offset(x.toFloat(), y.toFloat())
-        }
-
-        LaunchedEffect(offset, foundText) {
-            if (foundText) {
-                delay(1000)
+        LaunchedEffect(game.foundText, game.checkTime) {
+            if (game.foundText && game.checkTime > 1000) {
                 println("FOUND IT!")
                 showFound = true
-                if (startAutomatically) {
+                game.stopwatch.pause()
+                if (game.startAutomatically) {
                     delay(500)
-                    val pointsGained = itemOffset.getDistance() - timer
-                    points += pointsGained.absoluteValue
-                    val x = Random.nextInt(0, canvasSize.width.roundToInt())
-                    val y = Random.nextInt(0, canvasSize.height.roundToInt())
-                    itemOffset = Offset(x.toFloat(), y.toFloat())
+                    game.gainPoints()
+                    game.newLocation()
+                    game.reset()
                     showFound = false
-                    timer = 0.0
                 }
             }
+        }
+
+        LaunchedEffect(drawerState) {
+            snapshotFlow { drawerState.isOpen }
+                .distinctUntilChanged()
+                .collect { if (it) game.pause() else game.resume() }
         }
 
         Surface {
-            Scaffold(
-                topBar = {
-                    TopAppBar(
-                        navigationIcon = {
-                            Column(modifier = Modifier.padding(end = 4.dp)) {
-                                Text("Start Next Round Automatically?")
-                                Switch(
-                                    startAutomatically,
-                                    onCheckedChange = { startAutomatically = it }
-                                )
-                            }
-                        },
-                        title = { Text("Masking") },
-                        actions = {
-                            Text("${animateIntAsState(points.roundToInt()).value} points")
-                            OutlinedButton(
-                                onClick = {
-                                    scope.launch {
-                                        offsetAnimation.animateTo(center.toOffset()) {
-                                            offset = value.copy(
-                                                x = value.x - size / 2,
-                                                y = value.y - size / 2
-                                            )
+            ModalNavigationDrawer(
+                drawerContent = {
+                    ModalDrawerSheet {
+                        TopAppBar(title = { Text("Settings") })
+                        Divider()
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            ListItem(
+                                headlineText = { Text("Start Next Round Automatically?") },
+                                trailingContent = {
+                                    Switch(
+                                        game.startAutomatically,
+                                        onCheckedChange = { game.startAutomatically = it }
+                                    )
+                                }
+                            )
+                        }
+                    }
+                },
+                drawerState = drawerState,
+                gesturesEnabled = drawerState.isOpen
+            ) {
+                Scaffold(
+                    topBar = {
+                        TopAppBar(
+                            navigationIcon = {
+                                IconButton(
+                                    onClick = { scope.launch { drawerState.open() } }
+                                ) { Icon(Icons.Default.Settings, null) }
+                            },
+                            title = { Text("Masking") },
+                            actions = {
+                                Text("${animateIntAsState(game.points).value} points")
+                                OutlinedButton(
+                                    onClick = {
+                                        scope.launch {
+                                            offsetAnimation.animateTo(game.center.toOffset()) {
+                                                game.offset = value.copy(
+                                                    x = value.x - game.size / 2,
+                                                    y = value.y - game.size / 2
+                                                )
+                                            }
                                         }
                                     }
-                                }
-                            ) { Text("Reset Position") }
-                        }
-                    )
-                },
-                bottomBar = {
-                    BottomAppBar(
-                        actions = { Text(readableTimer) },
-                        floatingActionButton = {
-                            OutlinedButton(
-                                onClick = {
-                                    val pointsGained = itemOffset.getDistance() - timer
-                                    points += pointsGained.absoluteValue
-                                    val x = Random.nextInt(0, canvasSize.width.roundToInt())
-                                    val y = Random.nextInt(0, canvasSize.height.roundToInt())
-                                    itemOffset = Offset(x.toFloat(), y.toFloat())
-                                    showFound = false
-                                    timer = 0.0
-                                },
-                                enabled = showFound
-                            ) { Text("Found!") }
-                        }
-                    )
-                }
-            ) { p ->
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(p)
-                        .background(MaterialTheme.colorScheme.onSurface)
-                ) {
-                    val checkTime by checkTime(foundText, showFound)
-                    val data = updateTransitionData(foundText, checkTime)
+                                ) { Text("Reset Position") }
+                            }
+                        )
+                    },
+                    bottomBar = {
+                        BottomAppBar(
+                            actions = { Text(game.readableTimer) },
+                            floatingActionButton = {
+                                OutlinedButton(
+                                    onClick = {
+                                        game.gainPoints()
+                                        game.newLocation()
+                                        showFound = false
+                                        game.reset()
+                                    },
+                                    enabled = showFound
+                                ) { Text("Found!") }
+                            }
+                        )
+                    }
+                ) { p ->
                     Box(
                         Modifier
-                            .offset { itemOffset.round() }
-                            .scale(data.scale)
-                            .size(30.dp)
-                            .background(data.color, shape = CircleShape)
+                            .fillMaxSize()
+                            .padding(p)
+                            .background(MaterialTheme.colorScheme.onSurface)
+                    ) {
+                        val data = updateTransitionData(game.foundText, game.checkTime)
+                        Box(
+                            Modifier
+                                .offset { game.itemOffset.round() }
+                                .scale(data.scale)
+                                .size(BallSize.dp)
+                                .background(data.color, shape = CircleShape)
+                        )
+                    }
+
+                    ShowBehind(
+                        offset = { game.offset },
+                        offsetChange = { game.offset += it },
+                        sourceDrawing = ShowBehindDefaults.defaultSourceDrawing(game.size, game.offset),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(p)
+                            .onGloballyPositioned {
+                                game.center = it.size.center
+                                game.canvasSize = it.size.toSize()
+                            }
                     )
                 }
-
-                ShowBehind(
-                    offset = { offset },
-                    offsetChange = { offset += it },
-                    sourceDrawing = ShowBehindDefaults.defaultSourceDrawing(size, offset),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(p)
-                        .onGloballyPositioned {
-                            center = it.size.center
-                            canvasSize = it.size.toSize()
-                        }
-                )
             }
         }
     }
@@ -188,31 +200,75 @@ private class TransitionData(
     val scale by scale
 }
 
-@Composable
-internal fun timer(runTimer: Boolean, foundText: Boolean): MutableState<Double> {
-    val counter = remember { mutableStateOf(0.0) }
-
-    LaunchedEffect(runTimer, foundText) {
-        while (runTimer) {
-            delay(1)
-            counter.value += if (foundText) .5 else 1.0
-        }
-    }
-
-    return counter
-}
-
-@Composable
-internal fun checkTime(start: Boolean, isFound: Boolean) = produceState(0, start) {
-    if (!isFound) {
-        value = 0
-        while (start) {
-            delay(1)
-            value += 1
-        }
-    }
-}
-
 private val Emerald = Color(0xFF2ecc71)
 private val Sunflower = Color(0xFFf1c40f)
 private val Alizarin = Color(0xFFe74c3c)
+private const val BallSize = 30
+
+internal class GameViewModel(scope: CoroutineScope) {
+    val stopwatch = Stopwatch(tick = 1L)
+
+    var pauseGame by mutableStateOf(false)
+
+    var points by mutableStateOf(0)
+
+    var center by mutableStateOf(IntOffset.Zero)
+    var canvasSize by mutableStateOf(Size.Zero)
+    var startAutomatically by mutableStateOf(false)
+
+    val size by mutableStateOf(250f)
+    var offset by mutableStateOf(Offset.Zero)
+
+    var itemOffset by mutableStateOf(Offset.Zero)
+    val foundText by derivedStateOf {
+        itemOffset.x in offset.x..(offset.x + size) &&
+                itemOffset.y in offset.y..(offset.y + size)
+    }
+
+    var checkTime by mutableStateOf(0)
+    var timer by mutableStateOf(0.0)
+    val readableTimer by derivedStateOf { LocalTime.fromMillisecondOfDay(timer.roundToInt()).toString() }
+
+    init {
+        stopwatch.time
+            .onEach {
+                if (foundText) checkTime += 1
+                else checkTime = 0
+            }
+            .launchIn(scope)
+
+        stopwatch.time
+            .onEach { timer += if (foundText) .5 else 1.0 }
+            .launchIn(scope)
+
+        stopwatch.start()
+    }
+
+    fun reset() {
+        checkTime = 0
+        timer = 0.0
+        stopwatch.reset()
+        stopwatch.start()
+    }
+
+    fun newLocation() {
+        val x = Random.nextInt(0, (canvasSize.width - BallSize).roundToInt().coerceAtLeast(1))
+        val y = Random.nextInt(0, (canvasSize.height - BallSize).roundToInt().coerceAtLeast(1))
+        itemOffset = Offset(x.toFloat(), y.toFloat())
+    }
+
+    fun gainPoints() {
+        val pointsGained = itemOffset.getDistance() - timer
+        points += pointsGained.absoluteValue.roundToInt()
+    }
+
+    fun pause() {
+        pauseGame = true
+        stopwatch.pause()
+    }
+
+    fun resume() {
+        pauseGame = false
+        stopwatch.start()
+    }
+}
