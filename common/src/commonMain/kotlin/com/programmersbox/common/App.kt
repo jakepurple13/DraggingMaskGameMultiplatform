@@ -1,3 +1,5 @@
+@file:Suppress("PrivatePropertyName", "ConstPropertyName")
+
 package com.programmersbox.common
 
 import androidx.compose.animation.animateColor
@@ -22,6 +24,7 @@ import androidx.compose.ui.unit.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -37,27 +40,11 @@ internal fun App() {
         val scope = rememberCoroutineScope()
         val game = remember { GameViewModel(scope) }
         val offsetAnimation = remember(game.offset) { Animatable(game.offset, Offset.VectorConverter) }
-        var showFound by remember(game.itemOffset) { mutableStateOf(false) }
         val drawerState = rememberDrawerState(DrawerValue.Closed)
 
         LaunchedEffect(game.canvasSize) {
             game.reset()
             game.newLocation()
-        }
-
-        LaunchedEffect(game.foundText, game.checkTime) {
-            if (game.foundText && game.checkTime > 1000) {
-                println("FOUND IT!")
-                showFound = true
-                game.stopwatch.pause()
-                if (game.startAutomatically) {
-                    delay(500)
-                    game.gainPoints()
-                    game.newLocation()
-                    game.reset()
-                    showFound = false
-                }
-            }
         }
 
         LaunchedEffect(drawerState) {
@@ -127,10 +114,9 @@ internal fun App() {
                                     onClick = {
                                         game.gainPoints()
                                         game.newLocation()
-                                        showFound = false
                                         game.reset()
                                     },
-                                    enabled = showFound
+                                    enabled = game.showFound
                                 ) { Text("Found!") }
                             }
                         )
@@ -206,11 +192,11 @@ private val Alizarin = Color(0xFFe74c3c)
 private const val BallSize = 30
 
 internal class GameViewModel(scope: CoroutineScope) {
-    val stopwatch = Stopwatch(tick = 1L)
-
-    var pauseGame by mutableStateOf(false)
+    private val stopwatch = Stopwatch(tick = 1L)
 
     var points by mutableStateOf(0)
+
+    var showFound by mutableStateOf(false)
 
     var center by mutableStateOf(IntOffset.Zero)
     var canvasSize by mutableStateOf(Size.Zero)
@@ -242,6 +228,25 @@ internal class GameViewModel(scope: CoroutineScope) {
             .launchIn(scope)
 
         stopwatch.start()
+
+        snapshotFlow { itemOffset }
+            .distinctUntilChanged()
+            .onEach { showFound = false }
+            .launchIn(scope)
+
+        snapshotFlow { foundText && checkTime > 1000 }
+            .filter { it }
+            .onEach {
+                pause()
+                showFound = true
+                if (startAutomatically) {
+                    delay(500)
+                    gainPoints()
+                    newLocation()
+                    reset()
+                }
+            }
+            .launchIn(scope)
     }
 
     fun reset() {
@@ -263,12 +268,10 @@ internal class GameViewModel(scope: CoroutineScope) {
     }
 
     fun pause() {
-        pauseGame = true
         stopwatch.pause()
     }
 
     fun resume() {
-        pauseGame = false
         stopwatch.start()
     }
 }
